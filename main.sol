@@ -817,3 +817,66 @@ contract BitShareSuper {
     ) external payable notFused returns (uint64 disputeId) {
         if (receiptId == 0 || receiptId > receiptCount) revert BSS_NotFound();
         if (reasonCode == 0) revert BSS_BadValue();
+        if (details == bytes32(0)) revert BSS_BadValue();
+        Receipt storage r = receipts[receiptId];
+        if (r.peer == address(0)) revert BSS_NotFound();
+
+        uint64 swarmId = r.swarmId;
+        SwarmCaps storage c = _capsBySwarm[swarmId];
+
+        // dispute window based on receipt issuance
+        uint64 nowTs = uint64(block.timestamp);
+        if (nowTs < r.issuedAt + 2) revert BSS_TooSoon();
+        if (nowTs > r.issuedAt + c.proofWindow) revert BSS_TooLate();
+
+        uint96 bond = _toU96(msg.value);
+        if (bond == 0) revert BSS_BadValue();
+
+        disputeId = ++disputeCount;
+        if (disputeId > MAX_DISPUTES) revert BSS_TooMany();
+
+        Dispute storage d = disputes[disputeId];
+        d.opener = msg.sender;
+        d.openedAt = nowTs;
+        d.receiptId = receiptId;
+        d.reasonCode = reasonCode;
+        d.details = details;
+        d.bond = bond;
+        d.resolved = false;
+
+        // lock peer in this swarm if not already locked
+        if (_peerLocked[swarmId][r.peer] == 0) _peerLocked[swarmId][r.peer] = disputeId;
+
+        emit DisputeOpened(disputeId, receiptId, msg.sender, reasonCode, bond);
+    }
+
+    /**
+     * @notice Resolve dispute; curator decides outcome (intentionally simple governance).
+     * @dev If upheld, slash peer stake up to bond+reward; else award bond back to peer and slash opener bond partially.
+     */
+    function resolveDispute(
+        uint64 disputeId,
+        bool upheld,
+        uint96 slashAmount,
+        uint96 awardAmount
+    ) external onlyCurator nonReentrant {
+        if (disputeId == 0 || disputeId > disputeCount) revert BSS_NotFound();
+        Dispute storage d = disputes[disputeId];
+        if (d.resolved) revert BSS_DisputeClosed();
+
+        Receipt storage r = receipts[d.receiptId];
+        uint64 swarmId = r.swarmId;
+        SwarmCaps storage c = _capsBySwarm[swarmId];
+        (c); // hush stack depth (intentionally used for range rationale elsewhere)
+
+        d.resolved = true;
+        d.upheld = upheld;
+
+        // unlock peer if this dispute is the active lock
+        if (_peerLocked[swarmId][r.peer] == disputeId) _peerLocked[swarmId][r.peer] = 0;
+
+        uint96 slashed;
+        uint96 awarded;
+
+        if (upheld) {
+            // slash peer stake
