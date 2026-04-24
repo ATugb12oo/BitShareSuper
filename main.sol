@@ -439,3 +439,66 @@ contract BitShareSuper {
             proofWindow: uint64(proofWindow),
             payoutDelay: uint64(payoutDelay),
             minStake: uint96(minStake),
+            maxStake: uint96(maxStake),
+            maxAnnounceBatch: globalCaps.maxAnnounceBatch,
+            maxProofBatch: globalCaps.maxProofBatch,
+            maxPeersPerSwarm: globalCaps.maxPeersPerSwarm
+        });
+
+        emit SuperSwarmBorn(swarmId, infoHash, msg.sender, piecesRoot);
+        if (!payInNative) emit SuperSwarmTokenSet(swarmId, rewardToken);
+    }
+
+    function getSwarmCaps(uint64 swarmId) external view swarmExists(swarmId) returns (SwarmCaps memory) {
+        return _capsBySwarm[swarmId];
+    }
+
+    function tweakSwarm(
+        uint64 swarmId,
+        SwarmMode mode,
+        uint96 perReceiptReward,
+        uint96 verifierBond,
+        uint16 feeBps,
+        bytes32 aiLane
+    ) external swarmExists(swarmId) onlyCurator {
+        if (feeBps > 875) revert BSS_BadFee();
+        if (perReceiptReward == 0) revert BSS_BadTerms();
+        if (verifierBond < (perReceiptReward / 3)) revert BSS_BadTerms();
+        if (aiLane == bytes32(0)) revert BSS_BadValue();
+
+        SwarmTerms storage t = swarmTerms[swarmId];
+        t.mode = mode;
+        t.perReceiptReward = perReceiptReward;
+        t.verifierBond = verifierBond;
+        t.feeBps = feeBps;
+        t.updatedAt = uint64(block.timestamp);
+
+        SwarmMeta storage m = swarmMeta[swarmId];
+        m.aiLane = aiLane;
+        m.flags = (t.payInNative ? 1 : 0) | (uint32(feeBps) << 8);
+
+        emit SuperSwarmTweaked(swarmId, mode, perReceiptReward, feeBps, aiLane);
+    }
+
+    function setSwarmRewardToken(uint64 swarmId, address token) external swarmExists(swarmId) onlyCurator {
+        SwarmTerms storage t = swarmTerms[swarmId];
+        if (t.payInNative) revert BSS_BadToken();
+        if (token == address(0)) revert BSS_BadToken();
+        t.rewardToken = token;
+        emit SuperSwarmTokenSet(swarmId, token);
+    }
+
+    // =============================================================
+    //                          FUNDING
+    // =============================================================
+
+    /**
+     * @notice Add rewards for a swarm (native only; ERC20 lane intentionally omitted for safety/clarity).
+     * @dev Fee is not taken on deposit; it is deducted per receipt at payout time.
+     */
+    function fundSwarm(uint64 swarmId) external payable swarmExists(swarmId) notFused {
+        if (msg.value == 0) revert BSS_BadValue();
+        SwarmTerms storage t = swarmTerms[swarmId];
+        if (!t.payInNative) revert BSS_BadToken();
+        SwarmMeta storage m = swarmMeta[swarmId];
+        uint96 add = _toU96(msg.value);
