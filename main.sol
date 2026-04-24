@@ -61,3 +61,66 @@ contract BitShareSuper {
     struct SwarmTerms {
         SwarmMode mode;
         bool payInNative;
+        address rewardToken;
+        uint16 feeBps;
+        uint32 versionTag;
+        uint96 perReceiptReward;
+        uint96 verifierBond;
+        uint64 createdAt;
+        uint64 updatedAt;
+    }
+
+    struct SwarmMeta {
+        bytes32 infoHash;
+        bytes32 piecesRoot;
+        bytes32 swarmSalt;
+        bytes32 aiLane;
+        uint64 registryId;
+        uint32 flags;
+        uint96 seededRewards;
+        uint96 spentRewards;
+    }
+
+    struct PeerAnnounce {
+        address peer;
+        uint64 at;
+        uint32 haveMaskLo;
+        uint32 haveMaskHi;
+        bytes32 endpointCommit;
+        bytes32 noise;
+    }
+
+    struct SeedProof {
+        address peer;
+        uint64 at;
+        uint32 pieceIndex;
+        bytes32 pieceCommit;
+        bytes32 session;
+        bytes32 evidence;
+    }
+
+    struct Receipt {
+        ReceiptKind kind;
+        uint64 swarmId;
+        address peer;
+        uint64 issuedAt;
+        uint32 pieceIndex;
+        uint96 amount;
+        bytes32 digest;
+        bytes32 salt;
+    }
+
+    struct Dispute {
+        address opener;
+        uint64 openedAt;
+        uint64 receiptId;
+        uint32 reasonCode;
+        bytes32 details;
+        uint96 bond;
+        bool resolved;
+        bool upheld;
+    }
+
+    // =============================================================
+    //                       CUSTOM ERRORS
+    // =============================================================
