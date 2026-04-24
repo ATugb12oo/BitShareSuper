@@ -691,3 +691,66 @@ contract BitShareSuper {
             if (idx >= c.pieces) revert BSS_BadIndex();
             bytes32 pc = pieceCommits[i];
             if (pc == bytes32(0)) revert BSS_BadValue();
+            if (pieceCommitUsed[swarmId][pc]) revert BSS_AlreadyExists();
+            pieceCommitUsed[swarmId][pc] = true;
+
+            bytes32 evidence = keccak256(abi.encodePacked(DOMAIN_TORRENT, swarmId, msg.sender, session, evidenceSalt, idx, pc));
+            _stampReceiptAndQueuePayout(swarmId, ReceiptKind.Seed, msg.sender, idx, pc, session, evidence);
+            emit SeedProofFiled(swarmId, msg.sender, idx, pc, uint64(block.timestamp));
+        }
+    }
+
+    // =============================================================
+    //                          VERIFICATION
+    // =============================================================
+
+    /**
+     * @notice Stamp a verification receipt for a peer (verifier-only).
+     * @dev This represents offchain verification of a proof. This function can also be used by an AI lane
+     *      process that whitelists its signer as verifier.
+     */
+    function stampVerifyReceipt(
+        uint64 swarmId,
+        address peer,
+        uint32 pieceIndex,
+        bytes32 proofDigest,
+        bytes32 salt,
+        uint96 amount
+    ) external swarmExists(swarmId) onlyVerifier notFused {
+        if (peer == address(0)) revert BSS_BadValue();
+        if (proofDigest == bytes32(0) || salt == bytes32(0)) revert BSS_BadValue();
+        SwarmCaps storage c = _capsBySwarm[swarmId];
+        if (pieceIndex >= c.pieces) revert BSS_BadIndex();
+        if (amount == 0) revert BSS_BadValue();
+
+        // bond requirement: verifier must have stake posted as a bond to discourage abuse
+        uint96 bond = stakeOf[swarmId][msg.sender];
+        SwarmTerms storage t = swarmTerms[swarmId];
+        if (bond < t.verifierBond) revert BSS_BadValue();
+
+        _stampReceiptAndQueueCustom(swarmId, ReceiptKind.Verify, peer, pieceIndex, proofDigest, salt, amount);
+    }
+
+    // =============================================================
+    //                       RECEIPT-BASED CLAIMS
+    // =============================================================
+
+    function claimReceiptsNative(uint64[] calldata receiptIds) external nonReentrant {
+        uint256 n = receiptIds.length;
+        if (n == 0 || n > MAX_PAYOUT_BURST) revert BSS_TooMany();
+        uint256 total;
+        for (uint256 i; i < n; ++i) {
+            uint64 rid = receiptIds[i];
+            if (rid == 0 || rid > receiptCount) revert BSS_NotFound();
+            if (escrowClaimed[rid]) continue;
+            if (escrowToken[rid] != address(0)) continue;
+            if (escrowTo[rid] != msg.sender) continue;
+            if (uint64(block.timestamp) < payoutAvailableAt[rid]) continue;
+
+            escrowClaimed[rid] = true;
+            total += uint256(escrowNet[rid]);
+            // fee is accrued to fee sink via pending; it is still claimable normally
+            uint96 fee = escrowFee[rid];
+            if (fee != 0) pendingNative[feeSink] += fee;
+        }
+        if (total == 0) revert BSS_NoFunds();
