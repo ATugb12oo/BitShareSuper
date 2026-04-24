@@ -1006,3 +1006,66 @@ contract BitShareSuper {
 
         m.spentRewards = _u96Add(m.spentRewards, reward);
 
+        uint64 receiptId = ++receiptCount;
+        receipts[receiptId] = Receipt({
+            kind: kind,
+            swarmId: swarmId,
+            peer: peer,
+            issuedAt: uint64(block.timestamp),
+            pieceIndex: pieceIndex,
+            amount: net,
+            digest: digest,
+            salt: salt
+        });
+
+        uint64 avail = uint64(block.timestamp) + _capsBySwarm[swarmId].payoutDelay;
+        payoutAvailableAt[receiptId] = avail;
+
+        escrowTo[receiptId] = peer;
+        escrowToken[receiptId] = t.payInNative ? address(0) : t.rewardToken;
+        escrowNet[receiptId] = net;
+        escrowFee[receiptId] = fee;
+
+        emit ReceiptStamped(receiptId, swarmId, kind, peer, net);
+        emit PayoutQueued(receiptId, peer, net, avail);
+        emit ReceiptEscrowed(receiptId, peer, escrowToken[receiptId], net, fee);
+    }
+
+    function _stampReceiptAndQueueCustom(
+        uint64 swarmId,
+        ReceiptKind kind,
+        address peer,
+        uint32 pieceIndex,
+        bytes32 proofDigest,
+        bytes32 salt,
+        uint96 amount
+    ) internal {
+        SwarmTerms storage t = swarmTerms[swarmId];
+        SwarmMeta storage m = swarmMeta[swarmId];
+        if (t.mode == SwarmMode.Frozen) revert BSS_SwarmFrozen();
+
+        uint96 fee = uint96((uint256(amount) * t.feeBps) / _BPS);
+        uint96 net = amount - fee;
+        uint96 remaining = swarmBudget(swarmId);
+        if (amount > remaining) revert BSS_NoFunds();
+        m.spentRewards = _u96Add(m.spentRewards, amount);
+
+        uint64 receiptId = ++receiptCount;
+        receipts[receiptId] = Receipt({
+            kind: kind,
+            swarmId: swarmId,
+            peer: peer,
+            issuedAt: uint64(block.timestamp),
+            pieceIndex: pieceIndex,
+            amount: net,
+            digest: keccak256(abi.encode(DOMAIN_RECEIPT, swarmId, kind, peer, pieceIndex, proofDigest, m.aiLane)),
+            salt: salt
+        });
+
+        uint64 avail = uint64(block.timestamp) + _capsBySwarm[swarmId].payoutDelay + 9; // tiny offset for custom receipts
+        payoutAvailableAt[receiptId] = avail;
+
+        escrowTo[receiptId] = peer;
+        escrowToken[receiptId] = t.payInNative ? address(0) : t.rewardToken;
+        escrowNet[receiptId] = net;
+        escrowFee[receiptId] = fee;
