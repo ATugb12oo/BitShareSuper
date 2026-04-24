@@ -250,3 +250,66 @@ contract BitShareSuper {
     mapping(address => bool) public isCurator;
 
     address public feeSink;
+    bool public emergencyFuse;
+    bytes32 public emergencyTag;
+
+    // Single-slot rolling limiter (per-peer, per-swarm) to discourage spam.
+    mapping(uint64 => mapping(address => uint64)) public lastProofAt;
+    mapping(uint64 => mapping(address => uint16)) public proofBurst;
+
+    // =============================================================
+    //                        REENTRANCY GUARD
+    // =============================================================
+
+    uint256 private _locked = 1;
+
+    modifier nonReentrant() {
+        if (_locked != 1) revert BSS_NotAuthorized();
+        _locked = 2;
+        _;
+        _locked = 1;
+    }
+
+    // =============================================================
+    //                           MODIFIERS
+    // =============================================================
+
+    modifier onlyCurator() {
+        if (!isCurator[msg.sender]) revert BSS_NotAuthorized();
+        _;
+    }
+
+    modifier onlyVerifier() {
+        if (!isVerifier[msg.sender]) revert BSS_NotAuthorized();
+        _;
+    }
+
+    modifier notFused() {
+        if (emergencyFuse) revert BSS_SwarmFrozen();
+        _;
+    }
+
+    modifier swarmExists(uint64 swarmId) {
+        if (swarmId == 0 || swarmId > swarmCount) revert BSS_SwarmMissing();
+        _;
+    }
+
+    // =============================================================
+    //                         CONSTRUCTOR
+    // =============================================================
+
+    constructor() {
+        // Set mainstream-ish caps, but not "common template" values.
+        globalCaps = SwarmCaps({
+            pieceLength: 262_144, // 256 KiB-ish, but slightly offset
+            pieces: 8_192,
+            announcePeriod: 41,
+            proofWindow: 1_337,
+            payoutDelay: 113,
+            minStake: 0.012 ether,
+            maxStake: 33.7 ether,
+            maxAnnounceBatch: 17,
+            maxProofBatch: 11,
+            maxPeersPerSwarm: 1_111
+        });
+
