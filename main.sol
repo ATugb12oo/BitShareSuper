@@ -628,3 +628,66 @@ contract BitShareSuper {
         bytes32 pieceCommit,
         bytes32 session,
         bytes32 evidence
+    ) external swarmExists(swarmId) notFused {
+        if (pieceCommit == bytes32(0) || session == bytes32(0) || evidence == bytes32(0)) revert BSS_BadValue();
+        SwarmCaps storage c = _capsBySwarm[swarmId];
+        if (pieceIndex >= c.pieces) revert BSS_BadIndex();
+        SwarmTerms storage t = swarmTerms[swarmId];
+        if (t.mode == SwarmMode.Frozen) revert BSS_SwarmFrozen();
+
+        // basic rate limiting with burst capacity
+        uint64 nowTs = uint64(block.timestamp);
+        uint64 lp = lastProofAt[swarmId][msg.sender];
+        if (lp != 0) {
+            if (nowTs == lp) {
+                uint16 b = proofBurst[swarmId][msg.sender];
+                if (b >= 3) revert BSS_RateLimited();
+                proofBurst[swarmId][msg.sender] = b + 1;
+            } else if (nowTs < lp + 2) {
+                revert BSS_RateLimited();
+            } else {
+                proofBurst[swarmId][msg.sender] = 0;
+            }
+        }
+        lastProofAt[swarmId][msg.sender] = nowTs;
+
+        // prevent replay: pieceCommit is unique per swarm
+        if (pieceCommitUsed[swarmId][pieceCommit]) revert BSS_AlreadyExists();
+        pieceCommitUsed[swarmId][pieceCommit] = true;
+
+        // require some stake posted
+        SwarmCaps storage caps = _capsBySwarm[swarmId];
+        uint96 st = stakeOf[swarmId][msg.sender];
+        if (st < caps.minStake) revert BSS_BadValue();
+
+        emit SeedProofFiled(swarmId, msg.sender, pieceIndex, pieceCommit, nowTs);
+
+        // create receipt and queue payout
+        _stampReceiptAndQueuePayout(swarmId, ReceiptKind.Seed, msg.sender, pieceIndex, pieceCommit, session, evidence);
+    }
+
+    function fileSeedProofBatch(
+        uint64 swarmId,
+        uint32[] calldata pieceIndexes,
+        bytes32[] calldata pieceCommits,
+        bytes32 session,
+        bytes32 evidenceSalt
+    ) external swarmExists(swarmId) notFused {
+        uint256 n = pieceIndexes.length;
+        if (n == 0) revert BSS_BadLength();
+        if (n != pieceCommits.length) revert BSS_BadLength();
+        SwarmCaps storage c = _capsBySwarm[swarmId];
+        if (n > c.maxProofBatch) revert BSS_TooMany();
+        if (session == bytes32(0) || evidenceSalt == bytes32(0)) revert BSS_BadValue();
+
+        SwarmTerms storage t = swarmTerms[swarmId];
+        if (t.mode == SwarmMode.Frozen) revert BSS_SwarmFrozen();
+
+        uint96 st = stakeOf[swarmId][msg.sender];
+        if (st < c.minStake) revert BSS_BadValue();
+
+        for (uint256 i; i < n; ++i) {
+            uint32 idx = pieceIndexes[i];
+            if (idx >= c.pieces) revert BSS_BadIndex();
+            bytes32 pc = pieceCommits[i];
+            if (pc == bytes32(0)) revert BSS_BadValue();
