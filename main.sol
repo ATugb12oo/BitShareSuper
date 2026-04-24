@@ -502,3 +502,66 @@ contract BitShareSuper {
         if (!t.payInNative) revert BSS_BadToken();
         SwarmMeta storage m = swarmMeta[swarmId];
         uint96 add = _toU96(msg.value);
+        m.seededRewards = _u96Add(m.seededRewards, add);
+        emit SuperSwarmFunded(swarmId, msg.sender, msg.value, true);
+    }
+
+    function fundSwarmToken(uint64 swarmId, uint96 amount) external swarmExists(swarmId) notFused {
+        if (amount == 0) revert BSS_BadValue();
+        SwarmTerms storage t = swarmTerms[swarmId];
+        if (t.payInNative) revert BSS_BadToken();
+        address token = t.rewardToken;
+        if (token == address(0)) revert BSS_BadToken();
+        SwarmMeta storage m = swarmMeta[swarmId];
+        _safeTransferFromERC20(token, msg.sender, address(this), amount);
+        m.seededRewards = _u96Add(m.seededRewards, amount);
+        emit SuperSwarmFunded(swarmId, msg.sender, amount, false);
+    }
+
+    function drainSwarm(uint64 swarmId, uint96 amount, address to) external swarmExists(swarmId) onlyCurator nonReentrant {
+        if (to == address(0)) revert BSS_BadValue();
+        SwarmTerms storage t = swarmTerms[swarmId];
+        SwarmMeta storage m = swarmMeta[swarmId];
+        uint96 remaining = swarmBudget(swarmId);
+        if (amount == 0 || amount > remaining) revert BSS_NoFunds();
+        m.spentRewards = _u96Add(m.spentRewards, amount);
+        if (t.payInNative) {
+            _safeTransferNative(to, amount);
+            emit SuperSwarmDrained(swarmId, to, amount, true);
+        } else {
+            address token = t.rewardToken;
+            if (token == address(0)) revert BSS_BadToken();
+            _safeTransferERC20(token, to, amount);
+            emit SuperSwarmDrained(swarmId, to, amount, false);
+        }
+    }
+
+    // =============================================================
+    //                           DISCOVERY
+    // =============================================================
+
+    /**
+     * @notice Announce presence (endpointCommit hides IP/port; store commitment only).
+     * @param haveMaskLo Low 32 bits of a "have" bitfield fragment
+     * @param haveMaskHi High 32 bits of a "have" bitfield fragment
+     */
+    function announce(
+        uint64 swarmId,
+        bytes32 endpointCommit,
+        uint32 haveMaskLo,
+        uint32 haveMaskHi,
+        bytes32 noise
+    ) external swarmExists(swarmId) notFused {
+        SwarmTerms storage t = swarmTerms[swarmId];
+        if (t.mode == SwarmMode.Frozen) revert BSS_SwarmFrozen();
+
+        SwarmCaps storage c = _capsBySwarm[swarmId];
+        uint64 last = lastAnnounceAt[swarmId][msg.sender];
+        if (last != 0 && uint64(block.timestamp) < last + c.announcePeriod) revert BSS_RateLimited();
+
+        lastAnnounceAt[swarmId][msg.sender] = uint64(block.timestamp);
+        peerMaskLo[swarmId][msg.sender] = haveMaskLo;
+        peerMaskHi[swarmId][msg.sender] = haveMaskHi;
+
+        if (!peerKnown[swarmId][msg.sender]) {
+            uint16 pc = peerCount[swarmId];
