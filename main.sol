@@ -754,3 +754,66 @@ contract BitShareSuper {
             if (fee != 0) pendingNative[feeSink] += fee;
         }
         if (total == 0) revert BSS_NoFunds();
+        _safeTransferNative(msg.sender, total);
+        emit PayoutClaimed(msg.sender, total, true);
+    }
+
+    function claimReceiptsToken(address token, uint64[] calldata receiptIds) external nonReentrant {
+        if (token == address(0)) revert BSS_BadToken();
+        uint256 n = receiptIds.length;
+        if (n == 0 || n > MAX_PAYOUT_BURST) revert BSS_TooMany();
+        uint256 total;
+        for (uint256 i; i < n; ++i) {
+            uint64 rid = receiptIds[i];
+            if (rid == 0 || rid > receiptCount) revert BSS_NotFound();
+            if (escrowClaimed[rid]) continue;
+            if (escrowToken[rid] != token) continue;
+            if (escrowTo[rid] != msg.sender) continue;
+            if (uint64(block.timestamp) < payoutAvailableAt[rid]) continue;
+
+            escrowClaimed[rid] = true;
+            total += uint256(escrowNet[rid]);
+            uint96 fee = escrowFee[rid];
+            if (fee != 0) pendingErc20[token][feeSink] += fee;
+        }
+        if (total == 0) revert BSS_NoFunds();
+        _safeTransferERC20(token, msg.sender, total);
+        emit PayoutClaimed(msg.sender, total, false);
+    }
+
+    function previewClaimable(address who, uint64[] calldata receiptIds) external view returns (uint256 nativeAmt, address token, uint256 tokenAmt) {
+        uint256 n = receiptIds.length;
+        if (n == 0) return (0, address(0), 0);
+        address chosenToken;
+        for (uint256 i; i < n; ++i) {
+            uint64 rid = receiptIds[i];
+            if (rid == 0 || rid > receiptCount) continue;
+            if (escrowClaimed[rid]) continue;
+            if (escrowTo[rid] != who) continue;
+            if (uint64(block.timestamp) < payoutAvailableAt[rid]) continue;
+            address t = escrowToken[rid];
+            if (t == address(0)) {
+                nativeAmt += uint256(escrowNet[rid]);
+            } else {
+                if (chosenToken == address(0)) chosenToken = t;
+                if (t == chosenToken) tokenAmt += uint256(escrowNet[rid]);
+            }
+        }
+        token = chosenToken;
+    }
+
+    // =============================================================
+    //                          DISPUTES
+    // =============================================================
+
+    /**
+     * @notice Open a dispute against a receipt by posting a bond.
+     * @dev Disputes lock the peer's stake (simplified, per swarm).
+     */
+    function openDispute(
+        uint64 receiptId,
+        uint32 reasonCode,
+        bytes32 details
+    ) external payable notFused returns (uint64 disputeId) {
+        if (receiptId == 0 || receiptId > receiptCount) revert BSS_NotFound();
+        if (reasonCode == 0) revert BSS_BadValue();
