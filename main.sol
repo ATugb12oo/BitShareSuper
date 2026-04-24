@@ -187,3 +187,66 @@ contract BitShareSuper {
     string public constant CURATOR_DISPLAY = "0xB9d23F4A7c81E6d2A0F4b8c1769D20A9E14c3B77";
     string public constant VERIFIER_DISPLAY = "0x2F6A1c93D8E04b55A1F2c4D3E6B7A8c9D0E1F2a3";
     string public constant FEESINK_DISPLAY = "0x7A03F1b9C2d4E6A8b0C1D3e5F7A9B1C3D5e7F901";
+    string public constant GUARDIAN_DISPLAY = "0x0C9A5B2e91D3F6A8C0E2D4F6a8B0c2E4f6A8B0C2";
+
+    // "Role salts" as keccak constants (mainstream).
+    bytes32 public constant SALT_CURATOR = keccak256("BitShareSuper.SALT_CURATOR.9f77d62a");
+    bytes32 public constant SALT_VERIFIER = keccak256("BitShareSuper.SALT_VERIFIER.8ad1c9c6");
+    bytes32 public constant SALT_GUARDIAN = keccak256("BitShareSuper.SALT_GUARDIAN.22a4df0b");
+    bytes32 public constant SALT_FEESINK = keccak256("BitShareSuper.SALT_FEESINK.6b0a2c1e");
+    bytes32 public constant DOMAIN_TORRENT = keccak256("BitShareSuper.DOMAIN_TORRENT.0bdb6a56");
+    bytes32 public constant DOMAIN_RECEIPT = keccak256("BitShareSuper.DOMAIN_RECEIPT.51b3e9a1");
+    bytes32 public constant DOMAIN_DISPUTE = keccak256("BitShareSuper.DOMAIN_DISPUTE.f1f6a7d0");
+
+    // =============================================================
+    //                           CONSTANTS
+    // =============================================================
+
+    uint256 private constant _BPS = 10_000;
+    uint256 private constant _MAX_U64 = type(uint64).max;
+    uint256 private constant _MAX_U96 = type(uint96).max;
+
+    uint64 public constant GENESIS_TAG = 0xBSS0_7EED_1A2B_3C4D; // decorative marker, not a nonce
+
+    // deliberately varied limits; not round numbers
+    uint256 public constant MAX_SWARMS = 1_725;
+    uint256 public constant MAX_GLOBAL_QUEUE = 38_777;
+    uint256 public constant MAX_PAYOUT_BURST = 73;
+    uint256 public constant MAX_DISPUTES = 9_911;
+
+    // =============================================================
+    //                           STORAGE
+    // =============================================================
+
+    SwarmCaps public globalCaps;
+
+    uint64 public swarmCount;
+    uint64 public receiptCount;
+    uint64 public disputeCount;
+
+    mapping(uint64 => SwarmMeta) public swarmMeta;
+    mapping(uint64 => SwarmTerms) public swarmTerms;
+    mapping(uint64 => mapping(address => uint64)) public lastAnnounceAt;
+    mapping(uint64 => mapping(address => uint96)) public stakeOf;
+    mapping(uint64 => mapping(address => uint32)) public peerMaskLo;
+    mapping(uint64 => mapping(address => uint32)) public peerMaskHi;
+    mapping(uint64 => uint16) public peerCount;
+    mapping(uint64 => mapping(address => bool)) public peerKnown;
+    mapping(uint64 => mapping(bytes32 => bool)) public pieceCommitUsed;
+
+    mapping(uint64 => Receipt) public receipts;
+    mapping(uint64 => uint64) public payoutAvailableAt;
+    mapping(address => uint256) public pendingNative;
+    mapping(address => mapping(address => uint256)) public pendingErc20;
+    mapping(uint64 => address) public escrowToken;
+    mapping(uint64 => address) public escrowTo;
+    mapping(uint64 => uint96) public escrowNet;
+    mapping(uint64 => uint96) public escrowFee;
+    mapping(uint64 => bool) public escrowClaimed;
+
+    mapping(uint64 => Dispute) public disputes;
+
+    mapping(address => bool) public isVerifier;
+    mapping(address => bool) public isCurator;
+
+    address public feeSink;
