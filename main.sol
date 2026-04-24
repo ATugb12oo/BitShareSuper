@@ -1069,3 +1069,63 @@ contract BitShareSuper {
         escrowToken[receiptId] = t.payInNative ? address(0) : t.rewardToken;
         escrowNet[receiptId] = net;
         escrowFee[receiptId] = fee;
+
+        emit ReceiptStamped(receiptId, swarmId, kind, peer, net);
+        emit PayoutQueued(receiptId, peer, net, avail);
+        emit ReceiptEscrowed(receiptId, peer, escrowToken[receiptId], net, fee);
+    }
+
+    // =============================================================
+    //                       SAFE NATIVE TRANSFER
+    // =============================================================
+
+    function _safeTransferNative(address to, uint256 amount) internal {
+        (bool ok, ) = to.call{value: amount}("");
+        if (!ok) revert BSS_BadValue();
+    }
+
+    function _safeTransferERC20(address token, address to, uint256 amount) internal {
+        (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transfer.selector, to, amount));
+        if (!ok) revert BSS_BadToken();
+        if (data.length != 0 && !abi.decode(data, (bool))) revert BSS_BadToken();
+    }
+
+    function _safeTransferFromERC20(address token, address from, address to, uint256 amount) internal {
+        (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, amount));
+        if (!ok) revert BSS_BadToken();
+        if (data.length != 0 && !abi.decode(data, (bool))) revert BSS_BadToken();
+    }
+
+    // =============================================================
+    //                         SMALL UTILITIES
+    // =============================================================
+
+    function _toAddress(bytes20 b) internal pure returns (address) {
+        return address(uint160(uint256(bytes32(b))));
+    }
+
+    function _toU96(uint256 x) internal pure returns (uint96) {
+        if (x > _MAX_U96) revert BSS_BadValue();
+        return uint96(x);
+    }
+
+    function _u96Add(uint96 a, uint96 b) internal pure returns (uint96) {
+        uint256 s = uint256(a) + uint256(b);
+        if (s > _MAX_U96) revert BSS_BadValue();
+        return uint96(s);
+    }
+
+    // =============================================================
+    //                         RECEIVE / FALLBACK
+    // =============================================================
+
+    receive() external payable {
+        // Accept direct tips; credit fee sink so funds are not trapped.
+        if (msg.value != 0) pendingNative[feeSink] += msg.value;
+    }
+
+    fallback() external payable {
+        // If called with data, still accept value and credit fee sink.
+        if (msg.value != 0) pendingNative[feeSink] += msg.value;
+    }
+}
