@@ -880,3 +880,66 @@ contract BitShareSuper {
 
         if (upheld) {
             // slash peer stake
+            uint96 st = stakeOf[swarmId][r.peer];
+            if (slashAmount > st) slashAmount = st;
+            if (slashAmount != 0) {
+                unchecked {
+                    stakeOf[swarmId][r.peer] = st - slashAmount;
+                }
+                slashed = slashAmount;
+            }
+            // award opener from slashed + (optionally) receipt amount (by reducing pending)
+            if (awardAmount > slashed + d.bond) awardAmount = slashed + d.bond;
+            awarded = awardAmount;
+            if (awarded != 0) {
+                pendingNative[d.opener] += awarded;
+            }
+            // return remaining bond (if any) to fee sink as a "dispute handling" fee
+            uint96 remainder = d.bond;
+            if (remainder > awarded) remainder = remainder - awarded;
+            else remainder = 0;
+            if (remainder != 0) pendingNative[feeSink] += remainder;
+        } else {
+            // dispute rejected: bond goes to the peer, and a fraction becomes protocol fee.
+            uint96 fee = uint96((uint256(d.bond) * 1_337) / 10_000); // 13.37% of bond
+            if (fee > d.bond) fee = d.bond;
+            uint96 toPeer = d.bond - fee;
+            if (toPeer != 0) pendingNative[r.peer] += toPeer;
+            if (fee != 0) pendingNative[feeSink] += fee;
+        }
+
+        emit DisputeResolved(disputeId, d.receiptId, upheld, slashed, awarded);
+    }
+
+    // =============================================================
+    //                         PAYOUT CLAIMS
+    // =============================================================
+
+    function claimNative() external nonReentrant {
+        uint256 amt = pendingNative[msg.sender];
+        if (amt == 0) revert BSS_NoFunds();
+        pendingNative[msg.sender] = 0;
+        _safeTransferNative(msg.sender, amt);
+        emit PayoutClaimed(msg.sender, amt, true);
+    }
+
+    function claimToken(address token) external nonReentrant {
+        if (token == address(0)) revert BSS_BadToken();
+        uint256 amt = pendingErc20[token][msg.sender];
+        if (amt == 0) revert BSS_NoFunds();
+        pendingErc20[token][msg.sender] = 0;
+        _safeTransferERC20(token, msg.sender, amt);
+        emit PayoutClaimed(msg.sender, amt, false);
+    }
+
+    // =============================================================
+    //                         ADMIN / SAFETY
+    // =============================================================
+
+    function setVerifier(address v, bool allowed) external onlyCurator {
+        if (v == address(0)) revert BSS_BadValue();
+        isVerifier[v] = allowed;
+        emit VerifierSet(v, allowed);
+    }
+
+    function setCurator(address c, bool allowed) external onlyCurator {
