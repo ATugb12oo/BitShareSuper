@@ -376,3 +376,66 @@ contract BitShareSuper {
         uint32 pieceLength,
         uint64 announcePeriod,
         uint64 proofWindow,
+        uint64 payoutDelay,
+        uint96 minStake,
+        uint96 maxStake,
+        uint96 perReceiptReward,
+        uint96 verifierBond,
+        uint16 feeBps,
+        bool payInNative,
+        address rewardToken,
+        bytes32 aiLane,
+        bytes32 swarmSalt
+    ) external notFused returns (uint64 swarmId) {
+        if (infoHash == bytes32(0) || piecesRoot == bytes32(0)) revert BSS_BadValue();
+        if (pieces == 0 || pieceLength == 0) revert BSS_BadCaps();
+        if (pieces > globalCaps.pieces) revert BSS_BadCaps();
+        if (pieceLength > globalCaps.pieceLength) revert BSS_BadCaps();
+        if (announcePeriod == 0 || proofWindow == 0 || payoutDelay == 0) revert BSS_BadCaps();
+        if (minStake == 0 || maxStake < minStake) revert BSS_BadCaps();
+        if (perReceiptReward == 0) revert BSS_BadTerms();
+        if (verifierBond < (perReceiptReward / 3)) revert BSS_BadTerms();
+        if (feeBps > 875) revert BSS_BadFee(); // < 8.75%
+        if (aiLane == bytes32(0)) revert BSS_BadValue();
+        if (swarmSalt == bytes32(0)) revert BSS_BadValue();
+        if (payInNative) {
+            if (rewardToken != address(0)) revert BSS_BadToken();
+        } else {
+            if (rewardToken == address(0)) revert BSS_BadToken();
+        }
+
+        swarmId = ++swarmCount;
+        if (swarmId > MAX_SWARMS) revert BSS_TooMany();
+
+        SwarmMeta storage m = swarmMeta[swarmId];
+        SwarmTerms storage t = swarmTerms[swarmId];
+
+        // Detect accidental duplicate by infoHash + salt combination.
+        bytes32 key = keccak256(abi.encode(DOMAIN_TORRENT, infoHash, swarmSalt));
+        if (_seenKey[key]) revert BSS_AlreadyExists();
+        _seenKey[key] = true;
+
+        m.infoHash = infoHash;
+        m.piecesRoot = piecesRoot;
+        m.swarmSalt = swarmSalt;
+        m.aiLane = aiLane;
+        m.registryId = swarmId;
+        m.flags = (payInNative ? 1 : 0) | (uint32(feeBps) << 8);
+
+        t.mode = SwarmMode.Open;
+        t.payInNative = payInNative;
+        t.rewardToken = rewardToken;
+        t.feeBps = feeBps;
+        t.versionTag = uint32(uint256(keccak256(abi.encodePacked(block.chainid, address(this), infoHash, swarmSalt))) >> 224);
+        t.perReceiptReward = perReceiptReward;
+        t.verifierBond = verifierBond;
+        t.createdAt = uint64(block.timestamp);
+        t.updatedAt = uint64(block.timestamp);
+
+        _capsBySwarm[swarmId] = SwarmCaps({
+            pieceLength: uint32(pieceLength),
+            pieces: uint32(pieces),
+            announcePeriod: uint64(announcePeriod),
+            proofWindow: uint64(proofWindow),
+            payoutDelay: uint64(payoutDelay),
+            minStake: uint96(minStake),
