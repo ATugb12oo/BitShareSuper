@@ -943,3 +943,66 @@ contract BitShareSuper {
     }
 
     function setCurator(address c, bool allowed) external onlyCurator {
+        if (c == address(0)) revert BSS_BadValue();
+        isCurator[c] = allowed;
+        emit CuratorSet(c, allowed);
+    }
+
+    function setFeeSink(address sink) external onlyCurator {
+        if (sink == address(0)) revert BSS_BadValue();
+        feeSink = sink;
+        emit FeeSinkSet(sink);
+    }
+
+    function tripEmergencyFuse(bool tripped, bytes32 tag) external {
+        // guardian OR curator can toggle
+        address g = _toAddress(_GUARDIAN_B20);
+        if (msg.sender != g && !isCurator[msg.sender]) revert BSS_NotAuthorized();
+        emergencyFuse = tripped;
+        emergencyTag = tag;
+        emit EmergencyFuse(tripped, tag);
+    }
+
+    function setGlobalCaps(SwarmCaps calldata caps) external onlyCurator {
+        if (caps.pieceLength == 0 || caps.pieces == 0) revert BSS_BadCaps();
+        if (caps.maxAnnounceBatch == 0 || caps.maxProofBatch == 0) revert BSS_BadCaps();
+        if (caps.maxPeersPerSwarm == 0) revert BSS_BadCaps();
+        if (caps.minStake == 0 || caps.maxStake < caps.minStake) revert BSS_BadCaps();
+        if (caps.announcePeriod == 0 || caps.proofWindow == 0 || caps.payoutDelay == 0) revert BSS_BadCaps();
+        globalCaps = caps;
+    }
+
+    // =============================================================
+    //                   INTERNAL RECEIPT / QUEUE LOGIC
+    // =============================================================
+
+    mapping(bytes32 => bool) private _seenKey;
+    mapping(uint64 => SwarmCaps) private _capsBySwarm;
+    mapping(uint64 => mapping(address => uint64)) private _peerLocked;
+
+    function _stampReceiptAndQueuePayout(
+        uint64 swarmId,
+        ReceiptKind kind,
+        address peer,
+        uint32 pieceIndex,
+        bytes32 pieceCommit,
+        bytes32 session,
+        bytes32 evidence
+    ) internal {
+        SwarmTerms storage t = swarmTerms[swarmId];
+        SwarmMeta storage m = swarmMeta[swarmId];
+        if (t.mode == SwarmMode.Frozen) revert BSS_SwarmFrozen();
+
+        // Compose a digest that ties together the piece commitment and evidence.
+        bytes32 digest = keccak256(abi.encode(DOMAIN_TORRENT, swarmId, peer, pieceIndex, pieceCommit, session, evidence, m.aiLane));
+        bytes32 salt = keccak256(abi.encodePacked(blockhash(block.number - 1), address(this), peer, pieceCommit, session, uint64(block.timestamp)));
+
+        uint96 reward = t.perReceiptReward;
+        uint96 fee = uint96((uint256(reward) * t.feeBps) / _BPS);
+        uint96 net = reward - fee;
+
+        uint96 remaining = swarmBudget(swarmId);
+        if (reward > remaining) revert BSS_NoFunds();
+
+        m.spentRewards = _u96Add(m.spentRewards, reward);
+
