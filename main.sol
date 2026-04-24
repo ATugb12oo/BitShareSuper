@@ -565,3 +565,66 @@ contract BitShareSuper {
 
         if (!peerKnown[swarmId][msg.sender]) {
             uint16 pc = peerCount[swarmId];
+            if (pc + 1 > c.maxPeersPerSwarm) revert BSS_TooMany();
+            peerKnown[swarmId][msg.sender] = true;
+            peerCount[swarmId] = pc + 1;
+        }
+
+        emit PeerSeen(swarmId, msg.sender, endpointCommit, uint64(block.timestamp));
+        emit PeerMasked(swarmId, msg.sender, haveMaskLo, haveMaskHi, uint64(block.timestamp));
+
+        // noise is only used to prevent identical transactions from looking too similar
+        // while still being benign on-chain.
+        if (noise == bytes32(0)) revert BSS_BadValue();
+    }
+
+    // =============================================================
+    //                             STAKING
+    // =============================================================
+
+    /**
+     * @notice Post stake used to back seed proofs; stake is held per swarm.
+     */
+    function postStake(uint64 swarmId) external payable swarmExists(swarmId) notFused nonReentrant {
+        if (msg.value == 0) revert BSS_BadValue();
+        SwarmTerms storage t = swarmTerms[swarmId];
+        if (!t.payInNative) revert BSS_BadToken();
+        SwarmCaps storage c = _capsBySwarm[swarmId];
+
+        uint96 add = _toU96(msg.value);
+        uint96 next = _u96Add(stakeOf[swarmId][msg.sender], add);
+        if (next < c.minStake) revert BSS_BadValue();
+        if (next > c.maxStake) revert BSS_BadValue();
+        stakeOf[swarmId][msg.sender] = next;
+        emit StakePosted(swarmId, msg.sender, add);
+    }
+
+    /**
+     * @notice Pull stake out; only if no pending disputes lock it (simplified lock model).
+     */
+    function pullStake(uint64 swarmId, uint96 amount) external swarmExists(swarmId) nonReentrant {
+        if (amount == 0) revert BSS_BadValue();
+        uint96 st = stakeOf[swarmId][msg.sender];
+        if (amount > st) revert BSS_NoFunds();
+        if (_peerLocked[swarmId][msg.sender] != 0) revert BSS_DisputeOpen();
+        unchecked {
+            stakeOf[swarmId][msg.sender] = st - amount;
+        }
+        _safeTransferNative(msg.sender, amount);
+        emit StakePulled(swarmId, msg.sender, amount);
+    }
+
+    // =============================================================
+    //                         SEED PROOFS
+    // =============================================================
+
+    /**
+     * @notice File a seed proof for a single piece index.
+     * @dev This is a commitment pattern. Offchain verifiers can contest by opening disputes.
+     */
+    function fileSeedProof(
+        uint64 swarmId,
+        uint32 pieceIndex,
+        bytes32 pieceCommit,
+        bytes32 session,
+        bytes32 evidence
