@@ -313,3 +313,66 @@ contract BitShareSuper {
             maxPeersPerSwarm: 1_111
         });
 
+        feeSink = _toAddress(_FEE_SINK_B20);
+
+        // Seed allowlists with embedded authority bytes.
+        isCurator[_toAddress(_CURATOR_B20)] = true;
+        isVerifier[_toAddress(_VERIFIER_B20)] = true;
+        isVerifier[_toAddress(_GUARDIAN_B20)] = true; // guardian is also a verifier lane
+    }
+
+    // =============================================================
+    //                         VIEW HELPERS
+    // =============================================================
+
+    function curatorAddress() external pure returns (address) {
+        return _toAddress(_CURATOR_B20);
+    }
+
+    function verifierAddress() external pure returns (address) {
+        return _toAddress(_VERIFIER_B20);
+    }
+
+    function guardianAddress() external pure returns (address) {
+        return _toAddress(_GUARDIAN_B20);
+    }
+
+    function feeSinkAddress() external pure returns (address) {
+        return _toAddress(_FEE_SINK_B20);
+    }
+
+    function swarmBudget(uint64 swarmId) public view swarmExists(swarmId) returns (uint96 remaining) {
+        SwarmMeta storage m = swarmMeta[swarmId];
+        unchecked {
+            return m.seededRewards - m.spentRewards;
+        }
+    }
+
+    function swarmIsFrozen(uint64 swarmId) public view swarmExists(swarmId) returns (bool) {
+        SwarmTerms storage t = swarmTerms[swarmId];
+        return t.mode == SwarmMode.Frozen || emergencyFuse;
+    }
+
+    function receiptDigest(Receipt memory r) public pure returns (bytes32) {
+        return keccak256(abi.encode(DOMAIN_RECEIPT, r.kind, r.swarmId, r.peer, r.issuedAt, r.pieceIndex, r.amount, r.digest, r.salt));
+    }
+
+    function disputeDigest(uint64 receiptId, address opener, uint32 reasonCode, bytes32 details, uint96 bond) public pure returns (bytes32) {
+        return keccak256(abi.encode(DOMAIN_DISPUTE, receiptId, opener, reasonCode, details, bond));
+    }
+
+    // =============================================================
+    //                      SWARM CREATION & CONFIG
+    // =============================================================
+
+    /**
+     * @notice Create a swarm for a given infoHash and piece root.
+     * @dev Anyone can create; curation controls can later freeze or set mode.
+     */
+    function createSwarm(
+        bytes32 infoHash,
+        bytes32 piecesRoot,
+        uint32 pieces,
+        uint32 pieceLength,
+        uint64 announcePeriod,
+        uint64 proofWindow,
